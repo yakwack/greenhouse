@@ -200,9 +200,9 @@ function appToDb(plant) {
 
 // ─── AI Auto-fill ─────────────────────────────────────────────────────────────
 async function fetchPlantDataFromAI(plantName) {
-  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("No VITE_ANTHROPIC_API_KEY set in .env.local");
-
+  // Route through our proxy (/api/anthropic in prod via Vercel serverless,
+  // /api/anthropic in dev via Vite proxy in vite.config.js).
+  // This keeps the API key server-side and avoids CORS errors.
   const prompt = `You are a botanical expert. Generate comprehensive, accurate data for the plant: "${plantName}".
 Return ONLY a valid JSON object — no markdown, no explanation.
 {
@@ -224,23 +224,25 @@ Return ONLY a valid JSON object — no markdown, no explanation.
   "temperature": { "idealRange":"","description":"" }
 }`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch("/api/anthropic/v1/messages", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "claude-opus-4-6",
-      max_tokens: 1500,
+      max_tokens: 4000,
       messages: [{ role: "user", content: prompt }],
     }),
   });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `API error ${res.status}`);
+  }
   const data = await res.json();
   const text = data.content.map(c => c.text || "").join("");
-  return JSON.parse(text.replace(/```json|```/g, "").trim());
+console.log("RAW AI RESPONSE:", text);
+const cleaned = text.replace(/```json|```/g, "").trim();
+console.log("CLEANED:", cleaned.slice(0, 200));
+return JSON.parse(cleaned);
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -363,12 +365,19 @@ function PlantFormModal({ initial, onSave, onDelete, onClose }) {
     if (!searchQuery.trim()) return;
     setSearching(true); setSearchError("");
     try {
-      const data = await fetchPlantDataFromAI(searchQuery);
-      setPlant({ ...blankPlant(), ...data });
-      setStep("form");
-    } catch (e) {
-      setSearchError("Couldn't fetch plant data — check your API key or fill in manually.");
-    } finally { setSearching(false); }
+  const data = await fetchPlantDataFromAI(searchQuery);
+  console.log("PARSED PLANT DATA:", data);
+  console.log("ID:", data.id);
+  console.log("scientific_name:", data.scientific_name);
+  console.log("common_names:", data.common_names);
+  setPlant({ ...blankPlant(), ...data });
+  setStep("form");
+} 
+  catch (e) {
+  console.error("SEARCH ERROR:", e);
+  console.error("ERROR MESSAGE:", e.message);
+  setSearchError("Couldn't fetch plant data — check your API key or fill in manually.");
+} finally { setSearching(false); }
   };
 
   const handleSave = async () => {
@@ -771,9 +780,12 @@ export default function App() {
     });
   }, []);
 
-  const handleSavePlant = async (plant) => {
-    try {
-      const saved = await upsertPlant(appToDb(plant));
+const handleSavePlant = async (plant) => {
+  try {
+    console.log("SAVING PLANT:", plant);
+    console.log("CONVERTED TO DB:", appToDb(plant));
+    const saved = await upsertPlant(appToDb(plant));
+    console.log("SAVED RESULT:", saved);
       const appPlant = dbToApp(saved);
       setPlants(prev => {
         const exists = prev.find(p => p.id === appPlant.id);

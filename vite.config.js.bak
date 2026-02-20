@@ -1,0 +1,44 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import fs from 'fs'
+import path from 'path'
+
+function readEnvLocal() {
+  try {
+    const envPath = path.resolve(process.cwd(), '.env.local')
+    const contents = fs.readFileSync(envPath, 'utf8')
+    const match = contents.match(/ANTHROPIC_API_KEY=(.+)/)
+    return match ? match[1].trim() : null
+  } catch {
+    return null
+  }
+}
+
+const anthropicKey = readEnvLocal()
+
+if (!anthropicKey) {
+  console.warn('\u26a0 ANTHROPIC_API_KEY not found in .env.local')
+} else {
+  console.log('\u2713 ANTHROPIC_API_KEY loaded for proxy')
+}
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    proxy: {
+      '/api/anthropic': {
+        target: 'https://api.anthropic.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/anthropic/, ''),
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => {
+            if (anthropicKey) {
+              proxyReq.setHeader('x-api-key', anthropicKey)
+              proxyReq.setHeader('anthropic-version', '2023-06-01')
+            }
+          })
+        },
+      },
+    },
+  },
+})
