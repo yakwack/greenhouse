@@ -87,4 +87,7 @@ export default defineConfig({
     react(),
     anthropicProxyPlugin(anthropicKey),
   ],
+  server: {
+    host: true
+  },
 })
